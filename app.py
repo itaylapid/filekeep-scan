@@ -55,17 +55,19 @@ def contour_score(contour, image_shape):
     if not cv2.isContourConvex(contour):
         return 0
 
-    x, y, w, h = cv2.boundingRect(contour)
+    rect = cv2.boundingRect(contour)
+    x, y, w, h = rect
 
-    # יחס לא קיצוני (לא פס צר)
+    # יחס גובה/רוחב לא קיצוני
     ratio = w / float(h)
     if ratio < 0.3 or ratio > 3.5:
         return 0
 
+    # ניקוד שטח (יחסית לתמונה)
     image_area = image_shape[0] * image_shape[1]
     area_score = area / image_area
 
-    # ---- ניקוד מרכז ----
+    # ניקוד קרבה למרכז
     cx = x + w / 2
     cy = y + h / 2
 
@@ -76,34 +78,8 @@ def contour_score(contour, image_shape):
     max_dist = math.sqrt(center_x**2 + center_y**2)
     center_score = 1 - (dist / max_dist)
 
-    # ---- ניקוד קרבה לשוליים (חדש) ----
-    margin_threshold = 0.05  # 5% מהתמונה
-
-    left_dist = x / image_shape[1]
-    right_dist = (image_shape[1] - (x + w)) / image_shape[1]
-    top_dist = y / image_shape[0]
-    bottom_dist = (image_shape[0] - (y + h)) / image_shape[0]
-
-    edge_touch_score = 0
-
-    if left_dist < margin_threshold:
-        edge_touch_score += 1
-    if right_dist < margin_threshold:
-        edge_touch_score += 1
-    if top_dist < margin_threshold:
-        edge_touch_score += 1
-    if bottom_dist < margin_threshold:
-        edge_touch_score += 1
-
-    edge_touch_score = edge_touch_score / 4  # נרמול ל־0–1
-
-    # ---- שילוב ניקוד ----
-    total_score = (
-        area_score * 0.6 +
-        center_score * 0.2 +
-        edge_touch_score * 0.2
-    )
-
+    # ניקוד משולב
+    total_score = area_score * 0.7 + center_score * 0.3
     return total_score
 
 
@@ -144,7 +120,7 @@ def scan_document(image):
             best_contour.reshape(4, 2) * ratio
         )
 
-    # ---- תיקון תאורה עדין ----
+    # ---- Illumination correction (balanced) ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
@@ -159,7 +135,7 @@ def scan_document(image):
 
     warped = cv2.convertScaleAbs(warped, alpha=1.04, beta=3)
 
-    # ---- רוויה עדינה ----
+    # ---- Moderate saturation boost ----
     hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
     s = cv2.convertScaleAbs(s, alpha=1.2, beta=0)
