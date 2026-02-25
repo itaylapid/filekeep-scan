@@ -1,3 +1,12 @@
+from flask import Flask, request, send_file, jsonify
+import cv2
+import numpy as np
+import imutils
+from io import BytesIO
+import os
+
+app = Flask(__name__)
+
 def scan_document(image):
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -50,20 +59,27 @@ def scan_document(image):
     M = cv2.getPerspectiveTransform(rect, dst)
     warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
-    # ---- כאן הקסם האמיתי ----
+    return warped
 
-    warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
 
-    scanned = cv2.adaptiveThreshold(
-        warped_gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        21,
-        10
-    )
+@app.route("/scan", methods=["POST"])
+def scan():
+    if "image" not in request.files:
+        return jsonify({"error": "No image provided"}), 400
 
-    # ניקוי רעש קל
-    scanned = cv2.medianBlur(scanned, 3)
+    file = request.files["image"]
+    file_bytes = np.frombuffer(file.read(), np.uint8)
+    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-    return scanned
+    if image is None:
+        return jsonify({"error": "Invalid image"}), 400
+
+    scanned = scan_document(image)
+
+    _, buffer = cv2.imencode(".jpg", scanned)
+    return send_file(BytesIO(buffer.tobytes()), mimetype="image/jpeg")
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
