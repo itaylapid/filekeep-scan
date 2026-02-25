@@ -8,7 +8,6 @@ import os
 app = Flask(__name__)
 
 def scan_document(image):
-
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     edged = cv2.Canny(blur, 75, 200)
@@ -26,9 +25,9 @@ def scan_document(image):
             screenCnt = approx
             break
 
-if screenCnt is None:
-    print("NO CONTOUR DETECTED")
-    return image
+    if screenCnt is None:
+        print("NO_CONTOUR_DETECTED")
+        return image
 
     pts = screenCnt.reshape(4, 2)
     rect = np.zeros((4, 2), dtype="float32")
@@ -55,7 +54,8 @@ if screenCnt is None:
         [0, 0],
         [maxWidth - 1, 0],
         [maxWidth - 1, maxHeight - 1],
-        [0, maxHeight - 1]], dtype="float32")
+        [0, maxHeight - 1]
+    ], dtype="float32")
 
     M = cv2.getPerspectiveTransform(rect, dst)
     warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
