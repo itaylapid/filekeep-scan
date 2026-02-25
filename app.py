@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from io import BytesIO
 import os
+import math
 
 app = Flask(__name__)
 
@@ -46,10 +47,45 @@ def four_point_transform(image, pts):
     return warped
 
 
+def contour_score(contour, image_shape):
+    area = cv2.contourArea(contour)
+    if area < 1000:
+        return 0
+
+    if not cv2.isContourConvex(contour):
+        return 0
+
+    rect = cv2.boundingRect(contour)
+    x, y, w, h = rect
+
+    # יחס גובה/רוחב לא קיצוני
+    ratio = w / float(h)
+    if ratio < 0.3 or ratio > 3.5:
+        return 0
+
+    # ניקוד שטח (יחסית לתמונה)
+    image_area = image_shape[0] * image_shape[1]
+    area_score = area / image_area
+
+    # ניקוד קרבה למרכז
+    cx = x + w / 2
+    cy = y + h / 2
+
+    center_x = image_shape[1] / 2
+    center_y = image_shape[0] / 2
+
+    dist = math.sqrt((cx - center_x)**2 + (cy - center_y)**2)
+    max_dist = math.sqrt(center_x**2 + center_y**2)
+    center_score = 1 - (dist / max_dist)
+
+    # ניקוד משולב
+    total_score = area_score * 0.7 + center_score * 0.3
+    return total_score
+
+
 def scan_document(image):
     original = image.copy()
 
-    # Resize for stable detection
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -61,29 +97,27 @@ def scan_document(image):
     contours, _ = cv2.findContours(
         edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-    # ---- Choose largest 4-point contour ----
-    screenCnt = None
-    max_area = 0
+    best_score = 0
+    best_contour = None
 
     for c in contours:
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
         if len(approx) == 4:
-            area = cv2.contourArea(c)
-            if area > max_area:
-                screenCnt = approx
-                max_area = area
+            score = contour_score(approx, resized.shape)
+            if score > best_score:
+                best_score = score
+                best_contour = approx
 
-    if screenCnt is None:
+    if best_contour is None:
         h, w = original.shape[:2]
         warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
     else:
         warped = four_point_transform(
             original,
-            screenCnt.reshape(4, 2) * ratio
+            best_contour.reshape(4, 2) * ratio
         )
 
     # ---- Illumination correction (balanced) ----
@@ -99,7 +133,6 @@ def scan_document(image):
     lab_corrected = cv2.merge((l_mixed, a, b))
     warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
 
-    # ---- Subtle contrast boost ----
     warped = cv2.convertScaleAbs(warped, alpha=1.04, beta=3)
 
     # ---- Moderate saturation boost ----
