@@ -26,8 +26,9 @@ def scan_document(image):
             screenCnt = approx
             break
 
-    if screenCnt is None:
-        return image
+if screenCnt is None:
+    print("⚠️ NO CONTOUR DETECTED")
+    return image
 
     pts = screenCnt.reshape(4, 2)
     rect = np.zeros((4, 2), dtype="float32")
