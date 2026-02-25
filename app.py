@@ -6,6 +6,7 @@ import os
 
 app = Flask(__name__)
 
+
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
 
@@ -48,17 +49,19 @@ def four_point_transform(image, pts):
 def scan_document(image):
     original = image.copy()
 
-    # Resize for stability (important!)
+    # Resize for stability
     ratio = image.shape[0] / 800.0
-    image = cv2.resize(image, (int(image.shape[1] / ratio), 800))
+    resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
     edged = cv2.Canny(gray, 75, 200)
 
     contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    screenCnt = None
 
     for c in contours:
         peri = cv2.arcLength(c, True)
@@ -67,23 +70,16 @@ def scan_document(image):
         if len(approx) == 4:
             screenCnt = approx
             break
-    else:
+
+    if screenCnt is None:
         # fallback crop קטן אם לא זוהה דף
         h, w = original.shape[:2]
         return original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
 
     warped = four_point_transform(original, screenCnt.reshape(4, 2) * ratio)
 
-    # שיפור קל בלבד בלי להרוס טקסט
-    warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-    warped = cv2.adaptiveThreshold(
-        warped_gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        21,
-        10
-    )
+    # שיפור קל בצבע ובבהירות (בלי להפוך לשחור לבן)
+    warped = cv2.convertScaleAbs(warped, alpha=1.1, beta=10)
 
     return warped
 
