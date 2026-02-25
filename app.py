@@ -82,17 +82,23 @@ def scan_document(image):
             screenCnt.reshape(4, 2) * ratio
         )
 
-    # ---- Illumination correction (remove phone shadow) ----
-    lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
+# ---- Illumination correction (balanced & natural) ----
+lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
+l, a, b = cv2.split(lab)
 
-    blur = cv2.GaussianBlur(l, (101, 101), 0)
-    blur = np.where(blur == 0, 1, blur)
+blur = cv2.GaussianBlur(l, (101, 101), 0)
+blur = np.where(blur == 0, 1, blur)
 
-    l_corrected = cv2.divide(l, blur, scale=255)
+l_corrected = cv2.divide(l, blur, scale=255)
 
-    lab_corrected = cv2.merge((l_corrected, a, b))
-    warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
+# תיקון חלש יותר מהקודם
+l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
+
+lab_corrected = cv2.merge((l_mixed, a, b))
+warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
+
+# חיזוק קונטרסט עדין מאוד להחזרת עומק
+warped = cv2.convertScaleAbs(warped, alpha=1.04, beta=3)
 
     return warped
 
