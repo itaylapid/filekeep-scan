@@ -63,15 +63,21 @@ def scan_document(image):
     )
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
+    # ---- Choose largest valid 4-point contour ----
     screenCnt = None
+    image_area = resized.shape[0] * resized.shape[1]
+    max_area = 0
 
     for c in contours:
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
         if len(approx) == 4:
-            screenCnt = approx
-            break
+            area = cv2.contourArea(c)
+
+            if area > image_area * 0.2 and area > max_area:
+                screenCnt = approx
+                max_area = area
 
     if screenCnt is None:
         h, w = original.shape[:2]
@@ -82,7 +88,7 @@ def scan_document(image):
             screenCnt.reshape(4, 2) * ratio
         )
 
-    # ---- Illumination correction (balanced & natural) ----
+    # ---- Illumination correction (balanced) ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
@@ -91,14 +97,22 @@ def scan_document(image):
 
     l_corrected = cv2.divide(l, blur, scale=255)
 
-    # 70% original, 30% correction
     l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
 
     lab_corrected = cv2.merge((l_mixed, a, b))
     warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
 
-    # subtle contrast boost for depth
+    # ---- Subtle contrast boost ----
     warped = cv2.convertScaleAbs(warped, alpha=1.04, beta=3)
+
+    # ---- Moderate saturation boost ----
+    hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+
+    s = cv2.convertScaleAbs(s, alpha=1.2, beta=0)  # 20% יותר רוויה
+
+    hsv_enhanced = cv2.merge((h, s, v))
+    warped = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
 
     return warped
 
