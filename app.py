@@ -63,9 +63,8 @@ def scan_document(image):
     )
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-    # ---- Choose largest valid 4-point contour ----
+    # ---- Choose largest 4-point contour ----
     screenCnt = None
-    image_area = resized.shape[0] * resized.shape[1]
     max_area = 0
 
     for c in contours:
@@ -74,8 +73,7 @@ def scan_document(image):
 
         if len(approx) == 4:
             area = cv2.contourArea(c)
-
-            if area > image_area * 0.2 and area > max_area:
+            if area > max_area:
                 screenCnt = approx
                 max_area = area
 
@@ -96,7 +94,6 @@ def scan_document(image):
     blur = np.where(blur == 0, 1, blur)
 
     l_corrected = cv2.divide(l, blur, scale=255)
-
     l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
 
     lab_corrected = cv2.merge((l_mixed, a, b))
@@ -108,9 +105,7 @@ def scan_document(image):
     # ---- Moderate saturation boost ----
     hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-
-    s = cv2.convertScaleAbs(s, alpha=1.2, beta=0)  # 20% יותר רוויה
-
+    s = cv2.convertScaleAbs(s, alpha=1.2, beta=0)
     hsv_enhanced = cv2.merge((h, s, v))
     warped = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
 
