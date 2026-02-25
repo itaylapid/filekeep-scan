@@ -74,7 +74,6 @@ def scan_document(image):
             break
 
     if screenCnt is None:
-        # fallback crop קטן אם לא זוהה דף
         h, w = original.shape[:2]
         warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
     else:
@@ -83,15 +82,17 @@ def scan_document(image):
             screenCnt.reshape(4, 2) * ratio
         )
 
-    # --- Improve contrast & reduce shadows (Natural look) ---
+    # ---- Illumination correction (remove phone shadow) ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
+    blur = cv2.GaussianBlur(l, (101, 101), 0)
+    blur = np.where(blur == 0, 1, blur)
 
-    enhanced_lab = cv2.merge((l, a, b))
-    warped = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+    l_corrected = cv2.divide(l, blur, scale=255)
+
+    lab_corrected = cv2.merge((l_corrected, a, b))
+    warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
 
     return warped
 
