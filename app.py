@@ -27,7 +27,7 @@ def scan_document(image):
             break
 
 if screenCnt is None:
-    print("⚠️ NO CONTOUR DETECTED")
+    print("NO CONTOUR DETECTED")
     return image
 
     pts = screenCnt.reshape(4, 2)
