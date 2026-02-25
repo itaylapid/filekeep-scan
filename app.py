@@ -49,7 +49,7 @@ def four_point_transform(image, pts):
 def scan_document(image):
     original = image.copy()
 
-    # Resize for stability
+    # Resize for stable detection
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -58,7 +58,9 @@ def scan_document(image):
 
     edged = cv2.Canny(gray, 75, 200)
 
-    contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
     screenCnt = None
@@ -74,12 +76,22 @@ def scan_document(image):
     if screenCnt is None:
         # fallback crop קטן אם לא זוהה דף
         h, w = original.shape[:2]
-        return original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
+        warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
+    else:
+        warped = four_point_transform(
+            original,
+            screenCnt.reshape(4, 2) * ratio
+        )
 
-    warped = four_point_transform(original, screenCnt.reshape(4, 2) * ratio)
+    # --- Improve contrast & reduce shadows (Natural look) ---
+    lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
 
-    # שיפור קל בצבע ובבהירות (בלי להפוך לשחור לבן)
-    warped = cv2.convertScaleAbs(warped, alpha=1.1, beta=10)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+
+    enhanced_lab = cv2.merge((l, a, b))
+    warped = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
 
     return warped
 
