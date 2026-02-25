@@ -58,16 +58,13 @@ def contour_score(contour, image_shape):
     rect = cv2.boundingRect(contour)
     x, y, w, h = rect
 
-    # יחס גובה/רוחב לא קיצוני
     ratio = w / float(h)
     if ratio < 0.3 or ratio > 3.5:
         return 0
 
-    # ניקוד שטח (יחסית לתמונה)
     image_area = image_shape[0] * image_shape[1]
     area_score = area / image_area
 
-    # ניקוד קרבה למרכז
     cx = x + w / 2
     cy = y + h / 2
 
@@ -78,14 +75,11 @@ def contour_score(contour, image_shape):
     max_dist = math.sqrt(center_x**2 + center_y**2)
     center_score = 1 - (dist / max_dist)
 
-    # ניקוד משולב
     total_score = area_score * 0.7 + center_score * 0.3
     return total_score
 
 
-def scan_document(image):
-    original = image.copy()
-
+def detect_candidates(image):
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -98,8 +92,7 @@ def scan_document(image):
         edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    best_score = 0
-    best_contour = None
+    candidates = []
 
     for c in contours:
         peri = cv2.arcLength(c, True)
@@ -107,47 +100,14 @@ def scan_document(image):
 
         if len(approx) == 4:
             score = contour_score(approx, resized.shape)
-            if score > best_score:
-                best_score = score
-                best_contour = approx
+            if score > 0:
+                pts = (approx.reshape(4, 2) * ratio).tolist()
+                candidates.append((score, pts))
 
-    if best_contour is None:
-        h, w = original.shape[:2]
-        warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
-    else:
-        warped = four_point_transform(
-            original,
-            best_contour.reshape(4, 2) * ratio
-        )
+    candidates.sort(key=lambda x: x[0], reverse=True)
 
-    # ---- Illumination correction (balanced) ----
-    lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-
-    blur = cv2.GaussianBlur(l, (101, 101), 0)
-    blur = np.where(blur == 0, 1, blur)
-
-    l_corrected = cv2.divide(l, blur, scale=255)
-    l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
-
-    lab_corrected = cv2.merge((l_mixed, a, b))
-    warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
-
-    warped = cv2.convertScaleAbs(warped, alpha=1.04, beta=3)
-
-    # ---- Moderate saturation boost ----
-    hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    s = cv2.convertScaleAbs(s, alpha=1.2, beta=0)
-    hsv_enhanced = cv2.merge((h, s, v))
-    warped = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
-
-    return warped
-
-
-@app.route("/")
-def home():
-    return "Scanner running"
+    # נחזיר רק 3 מובילים
+    return [c[1] for c in candidates[:3]]
 
 
 @app.route("/scan", methods=["POST"])
@@ -162,10 +122,40 @@ def scan():
     if image is None:
         return jsonify({"error": "Invalid image"}), 400
 
-    scanned = scan_document(image)
+    candidates = detect_candidates(image)
 
-    _, buffer = cv2.imencode(".jpg", scanned)
+    return jsonify({
+        "candidates": candidates
+    })
+
+
+@app.route("/apply_crop", methods=["POST"])
+def apply_crop():
+    data = request.json
+    image_url = data.get("image_url")
+    points = data.get("points")
+
+    if not image_url or not points:
+        return jsonify({"error": "Missing data"}), 400
+
+    resp = cv2.imdecode(
+        np.frombuffer(
+            cv2.imencode('.jpg', cv2.imread(image_url))[1],
+            np.uint8
+        ),
+        cv2.IMREAD_COLOR
+    )
+
+    pts = np.array(points, dtype="float32")
+    warped = four_point_transform(resp, pts)
+
+    _, buffer = cv2.imencode(".jpg", warped)
     return send_file(BytesIO(buffer.tobytes()), mimetype="image/jpeg")
+
+
+@app.route("/")
+def home():
+    return "Scanner running"
 
 
 if __name__ == "__main__":
