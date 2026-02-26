@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 from io import BytesIO
 import os
-import math
 
 app = Flask(__name__)
 
@@ -47,63 +46,10 @@ def four_point_transform(image, pts):
     return warped
 
 
-def smart_score(contour, resized, edged):
-    area = cv2.contourArea(contour)
-    if area < 1000:
-        return 0
-
-    if not cv2.isContourConvex(contour):
-        return 0
-
-    x, y, w, h = cv2.boundingRect(contour)
-    ratio = w / float(h)
-
-    # יחס סביר בלבד
-    if ratio < 0.4 or ratio > 2.5:
-        return 0
-
-    image_area = resized.shape[0] * resized.shape[1]
-    area_score = area / image_area  # 0–1
-
-    # ---- צפיפות קצוות פנימיים ----
-    mask = np.zeros(resized.shape[:2], dtype="uint8")
-    cv2.drawContours(mask, [contour], -1, 255, -1)
-
-    edge_pixels = edged[mask == 255]
-    if len(edge_pixels) == 0:
-        return 0
-
-    edge_density = np.sum(edge_pixels > 0) / len(edge_pixels)
-
-    # טבלה צפופה = הרבה קצוות פנימיים
-    edge_penalty = 1 - min(edge_density * 3, 1)
-
-    # ---- כהות מסגרת ----
-    border_mask = np.zeros(resized.shape[:2], dtype="uint8")
-    cv2.drawContours(border_mask, [contour], -1, 255, 8)
-
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    border_pixels = gray[border_mask == 255]
-
-    if len(border_pixels) > 0:
-        border_darkness = np.mean(border_pixels)
-        border_penalty = border_darkness / 255
-    else:
-        border_penalty = 1
-
-    # ---- ניקוד משולב ----
-    total_score = (
-        area_score * 0.6 +
-        edge_penalty * 0.25 +
-        border_penalty * 0.15
-    )
-
-    return total_score
-
-
 def scan_document(image):
     original = image.copy()
 
+    # Resize for processing
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -113,32 +59,47 @@ def scan_document(image):
     edged = cv2.Canny(gray, 75, 200)
 
     contours, _ = cv2.findContours(
-        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    best_score = 0
+    if not contours:
+        return original
+
+    # Sort contours by area (largest first)
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    image_area = resized.shape[0] * resized.shape[1]
     best_contour = None
 
     for c in contours:
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
-        if len(approx) == 4:
-            score = smart_score(approx, resized, edged)
-            if score > best_score:
-                best_score = score
-                best_contour = approx
+        if len(approx) != 4:
+            continue
+
+        if not cv2.isContourConvex(approx):
+            continue
+
+        area = cv2.contourArea(approx)
+        area_ratio = area / image_area
+
+        # Require document to fill at least 60% of frame
+        if area_ratio < 0.6:
+            continue
+
+        best_contour = approx
+        break
 
     if best_contour is None:
-        h, w = original.shape[:2]
-        warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
-    else:
-        warped = four_point_transform(
-            original,
-            best_contour.reshape(4, 2) * ratio
-        )
+        return original
 
-    # ---- Illumination correction ----
+    warped = four_point_transform(
+        original,
+        best_contour.reshape(4, 2) * ratio
+    )
+
+    # Light illumination correction
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
