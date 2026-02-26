@@ -58,8 +58,6 @@ def has_dark_border(image, contour):
         return False
 
     mean_intensity = np.mean(border_pixels)
-
-    # אם המסגרת כהה מאוד (למשל < 60) נניח שזו מסגרת גרפית ולא דף
     return mean_intensity < 60
 
 
@@ -91,14 +89,12 @@ def scan_document(image):
 
         area = cv2.contourArea(approx)
 
-        # חייב להיות לפחות 70% משטח התמונה
         if area < 0.7 * image_area:
             continue
 
         if not cv2.isContourConvex(approx):
             continue
 
-        # בדיקה אם יש מסגרת כהה חשודה
         if has_dark_border(resized, approx):
             continue
 
@@ -110,9 +106,23 @@ def scan_document(image):
         h, w = original.shape[:2]
         warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
     else:
+        pts = best_contour.reshape(4, 2) * ratio
+
+        # ---- shrink contour 4% inward ----
+        center = np.mean(pts, axis=0)
+        shrink_factor = 0.04
+
+        shrinked_pts = []
+        for p in pts:
+            direction = center - p
+            shrinked = p + direction * shrink_factor
+            shrinked_pts.append(shrinked)
+
+        shrinked_pts = np.array(shrinked_pts, dtype="float32")
+
         warped = four_point_transform(
             original,
-            best_contour.reshape(4, 2) * ratio
+            shrinked_pts
         )
 
     # ---- Illumination correction (balanced) ----
