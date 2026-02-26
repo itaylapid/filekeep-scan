@@ -8,17 +8,16 @@ app = Flask(__name__)
 
 
 def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
+    pts = pts.reshape(4, 2)
 
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
+    sorted_by_y = pts[np.argsort(pts[:, 1])]
+    top = sorted_by_y[:2]
+    bottom = sorted_by_y[2:]
 
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
+    tl, tr = top[np.argsort(top[:, 0])]
+    bl, br = bottom[np.argsort(bottom[:, 0])]
 
-    return rect
+    return np.array([tl, tr, br, bl], dtype="float32")
 
 
 def four_point_transform(image, pts):
@@ -41,15 +40,12 @@ def four_point_transform(image, pts):
     ], dtype="float32")
 
     M = cv2.getPerspectiveTransform(rect, dst)
-    warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
-
-    return warped
+    return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 
 def scan_document(image):
     original = image.copy()
 
-    # Resize for stable detection
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -58,47 +54,48 @@ def scan_document(image):
 
     edged = cv2.Canny(gray, 75, 200)
 
-    contours, _ = cv2.findContours(
-        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    # 🔥 RETR_TREE כדי לקבל היררכיה
+    contours, hierarchy = cv2.findContours(
+        edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
     )
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
+    if contours is None or hierarchy is None:
+        return original
+
+    hierarchy = hierarchy[0]
+
+    imageArea = resized.shape[0] * resized.shape[1]
     screenCnt = None
+    maxArea = 0
 
-    for c in contours:
+    for i, c in enumerate(contours):
+
+        area = cv2.contourArea(c)
+        if area < imageArea * 0.2:
+            continue
+
+        if area > imageArea * 0.95:
+            continue
+
+        # 🔥 רק קונטורים חיצוניים אמיתיים (אין להם parent)
+        parent = hierarchy[i][3]
+        if parent != -1:
+            continue
+
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
-        if len(approx) == 4:
+        if len(approx) == 4 and area > maxArea:
+            maxArea = area
             screenCnt = approx
-            break
 
     if screenCnt is None:
-        h, w = original.shape[:2]
-        warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
-    else:
-        warped = four_point_transform(
-            original,
-            screenCnt.reshape(4, 2) * ratio
-        )
+        return original
 
-    # ---- Illumination correction (balanced & natural) ----
-    lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-
-    blur = cv2.GaussianBlur(l, (101, 101), 0)
-    blur = np.where(blur == 0, 1, blur)
-
-    l_corrected = cv2.divide(l, blur, scale=255)
-
-    # 70% original, 30% correction
-    l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
-
-    lab_corrected = cv2.merge((l_mixed, a, b))
-    warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
-
-    # subtle contrast boost for depth
-    warped = cv2.convertScaleAbs(warped, alpha=1.04, beta=3)
+    warped = four_point_transform(
+        original,
+        screenCnt.reshape(4, 2) * ratio
+    )
 
     return warped
 
