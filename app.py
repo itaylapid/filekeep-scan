@@ -50,17 +50,11 @@ def scan_document(image):
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # 🔥 טשטוש חזק מאוד כדי למחוק טקסט פנימי
+    gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
     edged = cv2.Canny(gray, 75, 200)
-
-    # =========================
-    # 🔥 חיזוק וסגירת קצוות
-    # =========================
-    kernel = np.ones((5, 5), np.uint8)
-    edged = cv2.dilate(edged, kernel, iterations=2)
-    edged = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
-    # =========================
 
     contours, hierarchy = cv2.findContours(
         edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
