@@ -49,7 +49,6 @@ def four_point_transform(image, pts):
 def scan_document(image):
     original = image.copy()
 
-    # ---- Resize for stable detection ----
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -62,11 +61,13 @@ def scan_document(image):
         edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
+    if not contours:
+        return original
+
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-    screenCnt = None
-    maxArea = 0
     imageArea = resized.shape[0] * resized.shape[1]
+    document_contour = None
 
     for c in contours:
         area = cv2.contourArea(c)
@@ -74,27 +75,25 @@ def scan_document(image):
         if area < 1000:
             continue
 
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        # אל תיקח את כל הפריים
+        if area > imageArea * 0.95:
+            continue
 
-        if len(approx) == 4:
-            # התעלם ממסגרת כל הפריים
-            if area > imageArea * 0.95:
-                continue
+        document_contour = c
+        break
 
-            if area > maxArea:
-                maxArea = area
-                screenCnt = approx
+    if document_contour is None:
+        return original
 
-    if screenCnt is None:
-        # fallback עדין
-        h, w = original.shape[:2]
-        warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
-    else:
-        warped = four_point_transform(
-            original,
-            screenCnt.reshape(4, 2) * ratio
-        )
+    # 🔥 המלבן המינימלי שעוטף את הקונטור
+    rect = cv2.minAreaRect(document_contour)
+    box = cv2.boxPoints(rect)
+    box = np.array(box, dtype="float32")
+
+    warped = four_point_transform(
+        original,
+        box * ratio
+    )
 
     # ---- Illumination correction ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
@@ -104,7 +103,6 @@ def scan_document(image):
     blur = np.where(blur == 0, 1, blur)
 
     l_corrected = cv2.divide(l, blur, scale=255)
-
     l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
 
     lab_corrected = cv2.merge((l_mixed, a, b))
