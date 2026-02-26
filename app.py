@@ -47,48 +47,58 @@ def four_point_transform(image, pts):
     return warped
 
 
-def has_dark_border(image, contour):
-    mask = np.zeros(image.shape[:2], dtype="uint8")
-    cv2.drawContours(mask, [contour], -1, 255, 10)
+def smart_score(contour, resized, edged):
+    area = cv2.contourArea(contour)
+    if area < 1000:
+        return 0
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    border_pixels = gray[mask == 255]
+    if not cv2.isContourConvex(contour):
+        return 0
 
-    if len(border_pixels) == 0:
-        return False
+    x, y, w, h = cv2.boundingRect(contour)
+    ratio = w / float(h)
 
-    mean_intensity = np.mean(border_pixels)
-    return mean_intensity < 60
+    # יחס סביר בלבד
+    if ratio < 0.4 or ratio > 2.5:
+        return 0
 
+    image_area = resized.shape[0] * resized.shape[1]
+    area_score = area / image_area  # 0–1
 
-def find_best_contour(contours, image_shape, min_area_ratio):
-    image_area = image_shape[0] * image_shape[1]
-    best_contour = None
-    best_area = 0
+    # ---- צפיפות קצוות פנימיים ----
+    mask = np.zeros(resized.shape[:2], dtype="uint8")
+    cv2.drawContours(mask, [contour], -1, 255, -1)
 
-    for c in contours:
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+    edge_pixels = edged[mask == 255]
+    if len(edge_pixels) == 0:
+        return 0
 
-        if len(approx) != 4:
-            continue
+    edge_density = np.sum(edge_pixels > 0) / len(edge_pixels)
 
-        area = cv2.contourArea(approx)
+    # טבלה צפופה = הרבה קצוות פנימיים
+    edge_penalty = 1 - min(edge_density * 3, 1)
 
-        if area < min_area_ratio * image_area:
-            continue
+    # ---- כהות מסגרת ----
+    border_mask = np.zeros(resized.shape[:2], dtype="uint8")
+    cv2.drawContours(border_mask, [contour], -1, 255, 8)
 
-        if not cv2.isContourConvex(approx):
-            continue
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    border_pixels = gray[border_mask == 255]
 
-        if has_dark_border(image_shape_image, approx):
-            continue
+    if len(border_pixels) > 0:
+        border_darkness = np.mean(border_pixels)
+        border_penalty = border_darkness / 255
+    else:
+        border_penalty = 1
 
-        if area > best_area:
-            best_area = area
-            best_contour = approx
+    # ---- ניקוד משולב ----
+    total_score = (
+        area_score * 0.6 +
+        edge_penalty * 0.25 +
+        border_penalty * 0.15
+    )
 
-    return best_contour
+    return total_score
 
 
 def scan_document(image):
@@ -106,59 +116,27 @@ def scan_document(image):
         edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    # ----- ניסיון ראשון: 70% -----
-    image_shape_image = resized
+    best_score = 0
     best_contour = None
-    image_area = resized.shape[0] * resized.shape[1]
 
-    for threshold in [0.7, 0.5]:
-        best_area = 0
-        best_contour = None
+    for c in contours:
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
-        for c in contours:
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-            if len(approx) != 4:
-                continue
-
-            area = cv2.contourArea(approx)
-
-            if area < threshold * image_area:
-                continue
-
-            if not cv2.isContourConvex(approx):
-                continue
-
-            if has_dark_border(resized, approx):
-                continue
-
-            if area > best_area:
-                best_area = area
+        if len(approx) == 4:
+            score = smart_score(approx, resized, edged)
+            if score > best_score:
+                best_score = score
                 best_contour = approx
-
-        if best_contour is not None:
-            break  # מצאנו — יוצאים מהלולאה
 
     if best_contour is None:
         h, w = original.shape[:2]
         warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
     else:
-        pts = best_contour.reshape(4, 2) * ratio
-
-        # ---- shrink 4% inward ----
-        center = np.mean(pts, axis=0)
-        shrink_factor = 0.04
-
-        shrinked_pts = []
-        for p in pts:
-            direction = center - p
-            shrinked = p + direction * shrink_factor
-            shrinked_pts.append(shrinked)
-
-        shrinked_pts = np.array(shrinked_pts, dtype="float32")
-
-        warped = four_point_transform(original, shrinked_pts)
+        warped = four_point_transform(
+            original,
+            best_contour.reshape(4, 2) * ratio
+        )
 
     # ---- Illumination correction ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
