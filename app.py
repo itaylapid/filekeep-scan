@@ -1,146 +1,60 @@
-from flask import Flask, request, send_file, jsonify
-import cv2
-import numpy as np
-from io import BytesIO
-import os
+טוב.
+אז הנה האמת בלי סיבובים:
 
-app = Flask(__name__)
+ה־`smart_score` היה טעות.
 
+הוא נשמע חכם —
+אבל בפועל הוא חנק את הזיהוי.
 
-def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
+למה?
 
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
+כי הוא דרש יותר מדי תנאים בו זמנית:
 
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
+* יחס מסוים
+* צפיפות קצוות מסוימת
+* כהות מסגרת
+* שטח מינימלי
+* convex
+* 4 נקודות
 
-    return rect
+בעולם אמיתי?
+מעט מאוד מסמכים עומדים בכל זה יחד.
 
+אז מה קרה בפועל?
 
-def four_point_transform(image, pts):
-    rect = order_points(pts)
-    (tl, tr, br, bl) = rect
+כמעט כל הקונטורים קיבלו ציון 0.
+`best_contour` נשאר None.
+ואז נכנסת ל־fallback.
 
-    widthA = np.linalg.norm(br - bl)
-    widthB = np.linalg.norm(tr - tl)
-    maxWidth = int(max(widthA, widthB))
+וזה נראה כאילו “לא קרה כלום”.
 
-    heightA = np.linalg.norm(tr - br)
-    heightB = np.linalg.norm(tl - bl)
-    maxHeight = int(max(heightA, heightB))
+---
 
-    dst = np.array([
-        [0, 0],
-        [maxWidth - 1, 0],
-        [maxWidth - 1, maxHeight - 1],
-        [0, maxHeight - 1]
-    ], dtype="float32")
+כלומר —
+זה לא שהסריקה עבדה רע.
 
-    M = cv2.getPerspectiveTransform(rect, dst)
-    warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
+היא פשוט לא עבדה בכלל.
 
-    return warped
+---
 
+בוא נעשה רגע איפוס מחשבתי.
 
-def scan_document(image):
-    original = image.copy()
+אם אני מוחק את כל ה-smart_score ואת כל הניקוד —
+מה נשאר?
 
-    ratio = image.shape[0] / 800.0
-    resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
+בחירה פשוטה:
 
-    # -------------------------
-    # 1️⃣ הגדלת ניגודיות אגרסיבית
-    # -------------------------
+> הקונטור המרובע הגדול ביותר שאינו כל הפריים.
 
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+פשוט.
+בלי חוכמות.
 
-    # Equalize histogram חזק
-    gray = cv2.equalizeHist(gray)
+---
 
-    # חידוד נוסף
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+לפני שניגע בקוד —
+שאלה אחת:
 
-    # -------------------------
-    # 2️⃣ Canny
-    # -------------------------
+כשזה היה “הכי גרוע”,
+האם זה היה אחרי שהוספנו את ה-smart_score?
 
-    edged = cv2.Canny(gray, 75, 200)
-
-    contours, _ = cv2.findContours(
-        edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if not contours:
-        return original
-
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-
-    screenCnt = None
-    maxArea = 0
-    imageArea = resized.shape[0] * resized.shape[1]
-
-    # -------------------------
-    # 3️⃣ בחירת המרובע הגדול ביותר
-    # -------------------------
-
-    for c in contours:
-        area = cv2.contourArea(c)
-
-        if area < imageArea * 0.2:  # חייב לתפוס לפחות 20%
-            continue
-
-        if area > imageArea * 0.95:  # לא כל הפריים
-            continue
-
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-        if len(approx) == 4 and area > maxArea:
-            maxArea = area
-            screenCnt = approx
-
-    if screenCnt is None:
-        return original
-
-    # -------------------------
-    # 4️⃣ Perspective Transform
-    # -------------------------
-
-    warped = four_point_transform(
-        original,
-        screenCnt.reshape(4, 2) * ratio
-    )
-
-    return warped
-
-
-@app.route("/")
-def home():
-    return "Scanner running"
-
-
-@app.route("/scan", methods=["POST"])
-def scan():
-    if "image" not in request.files:
-        return jsonify({"error": "No image provided"}), 400
-
-    file = request.files["image"]
-    file_bytes = np.frombuffer(file.read(), np.uint8)
-    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-    if image is None:
-        return jsonify({"error": "Invalid image"}), 400
-
-    scanned = scan_document(image)
-
-    _, buffer = cv2.imencode(".jpg", scanned)
-    return send_file(BytesIO(buffer.tobytes()), mimetype="image/jpeg")
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+כן / לא.
