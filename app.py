@@ -52,12 +52,24 @@ def scan_document(image):
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
+    # -------------------------
+    # 1️⃣ הגדלת ניגודיות אגרסיבית
+    # -------------------------
+
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+
+    # Equalize histogram חזק
+    gray = cv2.equalizeHist(gray)
+
+    # חידוד נוסף
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # -------------------------
+    # 2️⃣ Canny
+    # -------------------------
 
     edged = cv2.Canny(gray, 75, 200)
 
-    # 🔥 שינוי כאן
     contours, _ = cv2.findContours(
         edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -71,14 +83,17 @@ def scan_document(image):
     maxArea = 0
     imageArea = resized.shape[0] * resized.shape[1]
 
+    # -------------------------
+    # 3️⃣ בחירת המרובע הגדול ביותר
+    # -------------------------
+
     for c in contours:
         area = cv2.contourArea(c)
 
-        if area < 1000:
+        if area < imageArea * 0.2:  # חייב לתפוס לפחות 20%
             continue
 
-        # להתעלם ממסגרת כל הפריים
-        if area > imageArea * 0.95:
+        if area > imageArea * 0.95:  # לא כל הפריים
             continue
 
         peri = cv2.arcLength(c, True)
@@ -91,25 +106,14 @@ def scan_document(image):
     if screenCnt is None:
         return original
 
+    # -------------------------
+    # 4️⃣ Perspective Transform
+    # -------------------------
+
     warped = four_point_transform(
         original,
         screenCnt.reshape(4, 2) * ratio
     )
-
-    # illumination correction
-    lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-
-    blur = cv2.GaussianBlur(l, (101, 101), 0)
-    blur = np.where(blur == 0, 1, blur)
-
-    l_corrected = cv2.divide(l, blur, scale=255)
-    l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
-
-    lab_corrected = cv2.merge((l_mixed, a, b))
-    warped = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
-
-    warped = cv2.convertScaleAbs(warped, alpha=1.04, beta=3)
 
     return warped
 
