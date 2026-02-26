@@ -49,12 +49,24 @@ def scan_document(image):
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    # ======== שינוי כאן: CLAHE על ערוץ L ========
+
+    lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l_clahe = clahe.apply(l)
+
+    lab = cv2.merge((l_clahe, a, b))
+    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+    gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
     edged = cv2.Canny(gray, 75, 200)
 
-    # 🔥 RETR_TREE כדי לקבל היררכיה
+    # ============================================
+
     contours, hierarchy = cv2.findContours(
         edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -63,21 +75,20 @@ def scan_document(image):
         return original
 
     hierarchy = hierarchy[0]
-
     imageArea = resized.shape[0] * resized.shape[1]
+
     screenCnt = None
     maxArea = 0
 
     for i, c in enumerate(contours):
-
         area = cv2.contourArea(c)
+
         if area < imageArea * 0.2:
             continue
 
         if area > imageArea * 0.95:
             continue
 
-        # 🔥 רק קונטורים חיצוניים אמיתיים (אין להם parent)
         parent = hierarchy[i][3]
         if parent != -1:
             continue
