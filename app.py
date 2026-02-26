@@ -7,6 +7,10 @@ import os
 app = Flask(__name__)
 
 
+# =============================
+# Utilities
+# =============================
+
 def order_points(pts):
     pts = pts.reshape(4, 2)
 
@@ -43,62 +47,118 @@ def four_point_transform(image, pts):
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 
+# =============================
+# Hough-based document detection
+# =============================
+
+def detect_document_by_lines(resized):
+
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (7, 7), 0)
+
+    edged = cv2.Canny(gray, 50, 150)
+
+    lines = cv2.HoughLinesP(
+        edged,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=120,
+        minLineLength=int(resized.shape[1] * 0.4),
+        maxLineGap=50
+    )
+
+    if lines is None:
+        return None
+
+    horizontals = []
+    verticals = []
+
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+
+        length = np.hypot(x2 - x1, y2 - y1)
+
+        # סינון לפי זווית
+        if abs(y2 - y1) < 20:  # אופקי
+            horizontals.append((x1, y1, x2, y2, length))
+        elif abs(x2 - x1) < 20:  # אנכי
+            verticals.append((x1, y1, x2, y2, length))
+
+    if len(horizontals) < 2 or len(verticals) < 2:
+        return None
+
+    # בוחרים את הקווים הארוכים ביותר
+    horizontals = sorted(horizontals, key=lambda x: x[4], reverse=True)[:2]
+    verticals = sorted(verticals, key=lambda x: x[4], reverse=True)[:2]
+
+    # מיון למעלה/למטה
+    horizontals = sorted(horizontals, key=lambda x: x[1])
+    top_line = horizontals[0]
+    bottom_line = horizontals[1]
+
+    # מיון לשמאל/ימין
+    verticals = sorted(verticals, key=lambda x: x[0])
+    left_line = verticals[0]
+    right_line = verticals[1]
+
+    # חיתוך קווים
+    def intersection(l1, l2):
+        x1, y1, x2, y2, _ = l1
+        x3, y3, x4, y4, _ = l2
+
+        A1 = y2 - y1
+        B1 = x1 - x2
+        C1 = A1 * x1 + B1 * y1
+
+        A2 = y4 - y3
+        B2 = x3 - x4
+        C2 = A2 * x3 + B2 * y3
+
+        det = A1 * B2 - A2 * B1
+        if det == 0:
+            return None
+
+        x = (B2 * C1 - B1 * C2) / det
+        y = (A1 * C2 - A2 * C1) / det
+        return [x, y]
+
+    tl = intersection(top_line, left_line)
+    tr = intersection(top_line, right_line)
+    bl = intersection(bottom_line, left_line)
+    br = intersection(bottom_line, right_line)
+
+    if None in [tl, tr, bl, br]:
+        return None
+
+    return np.array([tl, tr, br, bl], dtype="float32")
+
+
+# =============================
+# Main
+# =============================
+
 def scan_document(image):
     original = image.copy()
 
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    pts = detect_document_by_lines(resized)
 
-    # 🔥 טשטוש חזק מאוד כדי למחוק טקסט פנימי
-    gray = cv2.GaussianBlur(gray, (21, 21), 0)
-
-    edged = cv2.Canny(gray, 75, 200)
-
-    contours, hierarchy = cv2.findContours(
-        edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if contours is None or hierarchy is None:
-        return original
-
-    hierarchy = hierarchy[0]
-
-    imageArea = resized.shape[0] * resized.shape[1]
-    screenCnt = None
-    maxArea = 0
-
-    for i, c in enumerate(contours):
-
-        area = cv2.contourArea(c)
-        if area < imageArea * 0.2:
-            continue
-
-        if area > imageArea * 0.95:
-            continue
-
-        parent = hierarchy[i][3]
-        if parent != -1:
-            continue
-
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-        if len(approx) == 4 and area > maxArea:
-            maxArea = area
-            screenCnt = approx
-
-    if screenCnt is None:
+    if pts is None:
         return original
 
     warped = four_point_transform(
         original,
-        screenCnt.reshape(4, 2) * ratio
+        pts * ratio
     )
 
     return warped
 
+
+# =============================
+# Flask
+# =============================
 
 @app.route("/")
 def home():
