@@ -49,7 +49,7 @@ def four_point_transform(image, pts):
 def scan_document(image):
     original = image.copy()
 
-    # Resize for processing
+    # ---- Resize for stable detection ----
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -59,47 +59,44 @@ def scan_document(image):
     edged = cv2.Canny(gray, 75, 200)
 
     contours, _ = cv2.findContours(
-        edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    if not contours:
-        return original
-
-    # Sort contours by area (largest first)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-    image_area = resized.shape[0] * resized.shape[1]
-    best_contour = None
+    screenCnt = None
+    maxArea = 0
+    imageArea = resized.shape[0] * resized.shape[1]
 
     for c in contours:
+        area = cv2.contourArea(c)
+
+        if area < 1000:
+            continue
+
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
-        if len(approx) != 4:
-            continue
+        if len(approx) == 4:
+            # התעלם ממסגרת כל הפריים
+            if area > imageArea * 0.95:
+                continue
 
-        if not cv2.isContourConvex(approx):
-            continue
+            if area > maxArea:
+                maxArea = area
+                screenCnt = approx
 
-        area = cv2.contourArea(approx)
-        area_ratio = area / image_area
+    if screenCnt is None:
+        # fallback עדין
+        h, w = original.shape[:2]
+        warped = original[int(0.05*h):int(0.95*h), int(0.05*w):int(0.95*w)]
+    else:
+        warped = four_point_transform(
+            original,
+            screenCnt.reshape(4, 2) * ratio
+        )
 
-        # Require document to fill at least 60% of frame
-        if area_ratio < 0.6:
-            continue
-
-        best_contour = approx
-        break
-
-    if best_contour is None:
-        return original
-
-    warped = four_point_transform(
-        original,
-        best_contour.reshape(4, 2) * ratio
-    )
-
-    # Light illumination correction
+    # ---- Illumination correction ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
@@ -107,6 +104,7 @@ def scan_document(image):
     blur = np.where(blur == 0, 1, blur)
 
     l_corrected = cv2.divide(l, blur, scale=255)
+
     l_mixed = cv2.addWeighted(l, 0.7, l_corrected, 0.3, 0)
 
     lab_corrected = cv2.merge((l_mixed, a, b))
