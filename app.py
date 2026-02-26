@@ -7,6 +7,10 @@ import os
 app = Flask(__name__)
 
 
+# =========================
+# Utilities
+# =========================
+
 def order_points(pts):
     pts = pts.reshape(4, 2)
 
@@ -43,73 +47,112 @@ def four_point_transform(image, pts):
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 
+# =========================
+# Method 1: Edge detection
+# =========================
+
+def detect_by_edges(resized):
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(gray, 75, 200)
+
+    contours, _ = cv2.findContours(
+        edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    imageArea = resized.shape[0] * resized.shape[1]
+    best = None
+    bestArea = 0
+
+    for c in contours:
+        area = cv2.contourArea(c)
+
+        if area < imageArea * 0.2:
+            continue
+
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+
+        if len(approx) == 4 and area > bestArea:
+            bestArea = area
+            best = approx
+
+    return best, bestArea
+
+
+# =========================
+# Method 2: Region detection
+# =========================
+
+def detect_by_region(resized):
+    lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    # Threshold בהירות (מסמכים לרוב בהירים)
+    _, thresh = cv2.threshold(l, 0, 255,
+                               cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # סוגרים חורים
+    kernel = np.ones((15, 15), np.uint8)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(
+        thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    imageArea = resized.shape[0] * resized.shape[1]
+    best = None
+    bestArea = 0
+
+    for c in contours:
+        area = cv2.contourArea(c)
+
+        if area < imageArea * 0.2:
+            continue
+
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+
+        if len(approx) == 4 and area > bestArea:
+            bestArea = area
+            best = approx
+
+    return best, bestArea
+
+
+# =========================
+# Main scan
+# =========================
+
 def scan_document(image):
     original = image.copy()
 
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
-    # ======== שינוי כאן: CLAHE על ערוץ L ========
+    edge_cnt, edge_area = detect_by_edges(resized)
+    region_cnt, region_area = detect_by_region(resized)
 
-    lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
+    # בוחרים את הגדול יותר
+    if edge_area > region_area:
+        chosen = edge_cnt
+    else:
+        chosen = region_cnt
 
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    l_clahe = clahe.apply(l)
-
-    lab = cv2.merge((l_clahe, a, b))
-    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-    gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    edged = cv2.Canny(gray, 75, 200)
-
-    # ============================================
-
-    contours, hierarchy = cv2.findContours(
-        edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if contours is None or hierarchy is None:
-        return original
-
-    hierarchy = hierarchy[0]
-    imageArea = resized.shape[0] * resized.shape[1]
-
-    screenCnt = None
-    maxArea = 0
-
-    for i, c in enumerate(contours):
-        area = cv2.contourArea(c)
-
-        if area < imageArea * 0.2:
-            continue
-
-        if area > imageArea * 0.95:
-            continue
-
-        parent = hierarchy[i][3]
-        if parent != -1:
-            continue
-
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-        if len(approx) == 4 and area > maxArea:
-            maxArea = area
-            screenCnt = approx
-
-    if screenCnt is None:
+    if chosen is None:
         return original
 
     warped = four_point_transform(
         original,
-        screenCnt.reshape(4, 2) * ratio
+        chosen.reshape(4, 2) * ratio
     )
 
     return warped
 
+
+# =========================
+# Flask
+# =========================
 
 @app.route("/")
 def home():
