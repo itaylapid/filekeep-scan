@@ -49,14 +49,24 @@ def four_point_transform(image, pts):
 def scan_document(image):
     original = image.copy()
 
-    # Resize
+    # Resize for stable detection
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
+    # ---- Preprocessing ----
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+
+    # Local contrast normalization (fix uneven lighting)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    edged = cv2.Canny(gray, 75, 200)
+    # Auto Canny
+    v = np.median(gray)
+    lower = int(max(0, 0.66 * v))
+    upper = int(min(255, 1.33 * v))
+    edged = cv2.Canny(gray, lower, upper)
 
     contours, _ = cv2.findContours(
         edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -77,26 +87,16 @@ def scan_document(image):
         if area < 1000:
             continue
 
-        # אל תיקח את כל הפריים
+        # ignore full frame
         if area > imageArea * 0.95:
             continue
 
-        if area > maxArea:
-            hull = cv2.convexHull(c)
-            peri = cv2.arcLength(hull, True)
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
-            approx = None
-
-            # מנסה רמות החלקה שונות עד שמתקבלות 4 נקודות
-            for eps_factor in [0.01, 0.02, 0.03, 0.04, 0.05]:
-                candidate = cv2.approxPolyDP(hull, eps_factor * peri, True)
-                if len(candidate) == 4:
-                    approx = candidate
-                    break
-
-            if approx is not None:
-                maxArea = area
-                screenCnt = approx
+        if len(approx) == 4 and area > maxArea:
+            maxArea = area
+            screenCnt = approx
 
     if screenCnt is None:
         return original
@@ -106,7 +106,7 @@ def scan_document(image):
         screenCnt.reshape(4, 2) * ratio
     )
 
-    # Illumination correction
+    # ---- Illumination correction after warp ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
