@@ -49,6 +49,7 @@ def four_point_transform(image, pts):
 def scan_document(image):
     original = image.copy()
 
+    # Resize
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
@@ -66,8 +67,9 @@ def scan_document(image):
 
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
+    screenCnt = None
+    maxArea = 0
     imageArea = resized.shape[0] * resized.shape[1]
-    document_contour = None
 
     for c in contours:
         area = cv2.contourArea(c)
@@ -79,23 +81,32 @@ def scan_document(image):
         if area > imageArea * 0.95:
             continue
 
-        document_contour = c
-        break
+        if area > maxArea:
+            hull = cv2.convexHull(c)
+            peri = cv2.arcLength(hull, True)
 
-    if document_contour is None:
+            approx = None
+
+            # מנסה רמות החלקה שונות עד שמתקבלות 4 נקודות
+            for eps_factor in [0.01, 0.02, 0.03, 0.04, 0.05]:
+                candidate = cv2.approxPolyDP(hull, eps_factor * peri, True)
+                if len(candidate) == 4:
+                    approx = candidate
+                    break
+
+            if approx is not None:
+                maxArea = area
+                screenCnt = approx
+
+    if screenCnt is None:
         return original
-
-    # 🔥 המלבן המינימלי שעוטף את הקונטור
-    rect = cv2.minAreaRect(document_contour)
-    box = cv2.boxPoints(rect)
-    box = np.array(box, dtype="float32")
 
     warped = four_point_transform(
         original,
-        box * ratio
+        screenCnt.reshape(4, 2) * ratio
     )
 
-    # ---- Illumination correction ----
+    # Illumination correction
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
