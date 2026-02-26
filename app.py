@@ -7,10 +7,6 @@ import os
 app = Flask(__name__)
 
 
-# =============================
-# Utilities
-# =============================
-
 def order_points(pts):
     pts = pts.reshape(4, 2)
 
@@ -47,118 +43,53 @@ def four_point_transform(image, pts):
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 
-# =============================
-# Hough-based document detection
-# =============================
-
-def detect_document_by_lines(resized):
-
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (7, 7), 0)
-
-    edged = cv2.Canny(gray, 50, 150)
-
-    lines = cv2.HoughLinesP(
-        edged,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=120,
-        minLineLength=int(resized.shape[1] * 0.4),
-        maxLineGap=50
-    )
-
-    if lines is None:
-        return None
-
-    horizontals = []
-    verticals = []
-
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-
-        length = np.hypot(x2 - x1, y2 - y1)
-
-        # סינון לפי זווית
-        if abs(y2 - y1) < 20:  # אופקי
-            horizontals.append((x1, y1, x2, y2, length))
-        elif abs(x2 - x1) < 20:  # אנכי
-            verticals.append((x1, y1, x2, y2, length))
-
-    if len(horizontals) < 2 or len(verticals) < 2:
-        return None
-
-    # בוחרים את הקווים הארוכים ביותר
-    horizontals = sorted(horizontals, key=lambda x: x[4], reverse=True)[:2]
-    verticals = sorted(verticals, key=lambda x: x[4], reverse=True)[:2]
-
-    # מיון למעלה/למטה
-    horizontals = sorted(horizontals, key=lambda x: x[1])
-    top_line = horizontals[0]
-    bottom_line = horizontals[1]
-
-    # מיון לשמאל/ימין
-    verticals = sorted(verticals, key=lambda x: x[0])
-    left_line = verticals[0]
-    right_line = verticals[1]
-
-    # חיתוך קווים
-    def intersection(l1, l2):
-        x1, y1, x2, y2, _ = l1
-        x3, y3, x4, y4, _ = l2
-
-        A1 = y2 - y1
-        B1 = x1 - x2
-        C1 = A1 * x1 + B1 * y1
-
-        A2 = y4 - y3
-        B2 = x3 - x4
-        C2 = A2 * x3 + B2 * y3
-
-        det = A1 * B2 - A2 * B1
-        if det == 0:
-            return None
-
-        x = (B2 * C1 - B1 * C2) / det
-        y = (A1 * C2 - A2 * C1) / det
-        return [x, y]
-
-    tl = intersection(top_line, left_line)
-    tr = intersection(top_line, right_line)
-    bl = intersection(bottom_line, left_line)
-    br = intersection(bottom_line, right_line)
-
-    if None in [tl, tr, bl, br]:
-        return None
-
-    return np.array([tl, tr, br, bl], dtype="float32")
-
-
-# =============================
-# Main
-# =============================
-
 def scan_document(image):
     original = image.copy()
 
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
-    pts = detect_document_by_lines(resized)
+    # 1️⃣ טשטוש חזק מאוד
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (31, 31), 0)
 
-    if pts is None:
+    # 2️⃣ Threshold אוטומטי
+    _, thresh = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    # 3️⃣ סגירת חורים
+    kernel = np.ones((25, 25), np.uint8)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    # 4️⃣ מציאת קונטורים
+    contours, _ = cv2.findContours(
+        thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return original
+
+    # 5️⃣ לבחור את הגדול ביותר
+    largest = max(contours, key=cv2.contourArea)
+
+    # 6️⃣ Convex Hull
+    hull = cv2.convexHull(largest)
+
+    # 7️⃣ קירוב ל-4 פינות
+    peri = cv2.arcLength(hull, True)
+    approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
+
+    if len(approx) != 4:
         return original
 
     warped = four_point_transform(
         original,
-        pts * ratio
+        approx.reshape(4, 2) * ratio
     )
 
     return warped
 
-
-# =============================
-# Flask
-# =============================
 
 @app.route("/")
 def home():
