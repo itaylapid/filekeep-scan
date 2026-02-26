@@ -61,6 +61,36 @@ def has_dark_border(image, contour):
     return mean_intensity < 60
 
 
+def find_best_contour(contours, image_shape, min_area_ratio):
+    image_area = image_shape[0] * image_shape[1]
+    best_contour = None
+    best_area = 0
+
+    for c in contours:
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+
+        if len(approx) != 4:
+            continue
+
+        area = cv2.contourArea(approx)
+
+        if area < min_area_ratio * image_area:
+            continue
+
+        if not cv2.isContourConvex(approx):
+            continue
+
+        if has_dark_border(image_shape_image, approx):
+            continue
+
+        if area > best_area:
+            best_area = area
+            best_contour = approx
+
+    return best_contour
+
+
 def scan_document(image):
     original = image.copy()
 
@@ -76,31 +106,39 @@ def scan_document(image):
         edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    image_area = resized.shape[0] * resized.shape[1]
+    # ----- ניסיון ראשון: 70% -----
+    image_shape_image = resized
     best_contour = None
-    best_area = 0
+    image_area = resized.shape[0] * resized.shape[1]
 
-    for c in contours:
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+    for threshold in [0.7, 0.5]:
+        best_area = 0
+        best_contour = None
 
-        if len(approx) != 4:
-            continue
+        for c in contours:
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
-        area = cv2.contourArea(approx)
+            if len(approx) != 4:
+                continue
 
-        if area < 0.7 * image_area:
-            continue
+            area = cv2.contourArea(approx)
 
-        if not cv2.isContourConvex(approx):
-            continue
+            if area < threshold * image_area:
+                continue
 
-        if has_dark_border(resized, approx):
-            continue
+            if not cv2.isContourConvex(approx):
+                continue
 
-        if area > best_area:
-            best_area = area
-            best_contour = approx
+            if has_dark_border(resized, approx):
+                continue
+
+            if area > best_area:
+                best_area = area
+                best_contour = approx
+
+        if best_contour is not None:
+            break  # מצאנו — יוצאים מהלולאה
 
     if best_contour is None:
         h, w = original.shape[:2]
@@ -108,7 +146,7 @@ def scan_document(image):
     else:
         pts = best_contour.reshape(4, 2) * ratio
 
-        # ---- shrink contour 4% inward ----
+        # ---- shrink 4% inward ----
         center = np.mean(pts, axis=0)
         shrink_factor = 0.04
 
@@ -120,12 +158,9 @@ def scan_document(image):
 
         shrinked_pts = np.array(shrinked_pts, dtype="float32")
 
-        warped = four_point_transform(
-            original,
-            shrinked_pts
-        )
+        warped = four_point_transform(original, shrinked_pts)
 
-    # ---- Illumination correction (balanced) ----
+    # ---- Illumination correction ----
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
