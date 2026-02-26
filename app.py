@@ -49,27 +49,17 @@ def four_point_transform(image, pts):
 def scan_document(image):
     original = image.copy()
 
-    # Resize for stable detection
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
-    # ---- Preprocessing ----
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-
-    # Local contrast normalization (fix uneven lighting)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    gray = clahe.apply(gray)
-
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Auto Canny
-    v = np.median(gray)
-    lower = int(max(0, 0.66 * v))
-    upper = int(min(255, 1.33 * v))
-    edged = cv2.Canny(gray, lower, upper)
+    edged = cv2.Canny(gray, 75, 200)
 
+    # 🔥 שינוי כאן
     contours, _ = cv2.findContours(
-        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
     )
 
     if not contours:
@@ -87,7 +77,7 @@ def scan_document(image):
         if area < 1000:
             continue
 
-        # ignore full frame
+        # להתעלם ממסגרת כל הפריים
         if area > imageArea * 0.95:
             continue
 
@@ -106,7 +96,7 @@ def scan_document(image):
         screenCnt.reshape(4, 2) * ratio
     )
 
-    # ---- Illumination correction after warp ----
+    # illumination correction
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
