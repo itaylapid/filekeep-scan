@@ -43,50 +43,88 @@ def four_point_transform(image, pts):
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 
+# ===============================
+# 🔥 שיפור איכות והסרת צל
+# ===============================
+
+def enhance_document(warped):
+
+    lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    # יצירת מפה של תאורה (רקע תאורה)
+    blur = cv2.GaussianBlur(l, (101, 101), 0)
+    blur = np.where(blur == 0, 1, blur)
+
+    # תיקון תאורה
+    l_corrected = cv2.divide(l, blur, scale=255)
+
+    # שילוב עדין כדי שלא ייראה מלאכותי
+    l_final = cv2.addWeighted(l, 0.6, l_corrected, 0.4, 0)
+
+    lab_corrected = cv2.merge((l_final, a, b))
+    result = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
+
+    # חיזוק קונטרסט עדין
+    result = cv2.convertScaleAbs(result, alpha=1.1, beta=5)
+
+    return result
+
+
 def scan_document(image):
     original = image.copy()
 
     ratio = image.shape[0] / 800.0
     resized = cv2.resize(image, (int(image.shape[1] / ratio), 800))
 
-    # 1️⃣ טשטוש חזק מאוד
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (31, 31), 0)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # 2️⃣ Threshold אוטומטי
-    _, thresh = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    edged = cv2.Canny(gray, 75, 200)
+
+    contours, hierarchy = cv2.findContours(
+        edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    # 3️⃣ סגירת חורים
-    kernel = np.ones((25, 25), np.uint8)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-
-    # 4️⃣ מציאת קונטורים
-    contours, _ = cv2.findContours(
-        thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if not contours:
+    if contours is None or hierarchy is None:
         return original
 
-    # 5️⃣ לבחור את הגדול ביותר
-    largest = max(contours, key=cv2.contourArea)
+    hierarchy = hierarchy[0]
 
-    # 6️⃣ Convex Hull
-    hull = cv2.convexHull(largest)
+    imageArea = resized.shape[0] * resized.shape[1]
+    screenCnt = None
+    maxArea = 0
 
-    # 7️⃣ קירוב ל-4 פינות
-    peri = cv2.arcLength(hull, True)
-    approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
+    for i, c in enumerate(contours):
 
-    if len(approx) != 4:
+        area = cv2.contourArea(c)
+        if area < imageArea * 0.2:
+            continue
+
+        if area > imageArea * 0.95:
+            continue
+
+        parent = hierarchy[i][3]
+        if parent != -1:
+            continue
+
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+
+        if len(approx) == 4 and area > maxArea:
+            maxArea = area
+            screenCnt = approx
+
+    if screenCnt is None:
         return original
 
     warped = four_point_transform(
         original,
-        approx.reshape(4, 2) * ratio
+        screenCnt.reshape(4, 2) * ratio
     )
+
+    # 🔥 שיפור איכות אחרי חיתוך
+    warped = enhance_document(warped)
 
     return warped
 
