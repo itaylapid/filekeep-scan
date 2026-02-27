@@ -44,16 +44,21 @@ def enhance_document(image):
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
+    # Shadow reduction (mild)
     blur = cv2.GaussianBlur(l, (101, 101), 0)
     blur = np.where(blur == 0, 1, blur)
-
     l_corrected = cv2.divide(l, blur, scale=255)
-    l_final = cv2.addWeighted(l, 0.6, l_corrected, 0.4, 0)
 
-    lab = cv2.merge((l_final, a, b))
-    result = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    # Gentle blending to avoid over-brightening
+    l_blended = cv2.addWeighted(l, 0.8, l_corrected, 0.2, 0)
 
-    result = cv2.convertScaleAbs(result, alpha=1.1, beta=5)
+    # Local contrast enhancement
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_contrast = clahe.apply(l_blended)
+
+    lab_final = cv2.merge((l_contrast, a, b))
+    result = cv2.cvtColor(lab_final, cv2.COLOR_LAB2BGR)
+
     return result
 
 
@@ -105,6 +110,7 @@ def scan_document(image):
         return original
 
     warped = four_point_transform(original, best.reshape(4, 2) * ratio)
+
     warped = enhance_document(warped)
 
     return warped
