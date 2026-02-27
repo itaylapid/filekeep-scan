@@ -43,32 +43,29 @@ def four_point_transform(image, pts):
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 
-# ===============================
-# 🔥 שיפור איכות והסרת צל
-# ===============================
+def enhance_quality(warped):
 
-def enhance_document(warped):
-
+    # 1️⃣ תיקון תאורה עדין (LAB)
     lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
-    # יצירת מפה של תאורה (רקע תאורה)
     blur = cv2.GaussianBlur(l, (101, 101), 0)
     blur = np.where(blur == 0, 1, blur)
 
-    # תיקון תאורה
     l_corrected = cv2.divide(l, blur, scale=255)
+    l_mixed = cv2.addWeighted(l, 0.75, l_corrected, 0.25, 0)
 
-    # שילוב עדין כדי שלא ייראה מלאכותי
-    l_final = cv2.addWeighted(l, 0.6, l_corrected, 0.4, 0)
+    lab = cv2.merge((l_mixed, a, b))
+    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-    lab_corrected = cv2.merge((l_final, a, b))
-    result = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2BGR)
+    # 2️⃣ חידוד עדין (Unsharp Mask)
+    gaussian = cv2.GaussianBlur(enhanced, (0, 0), 3)
+    sharpened = cv2.addWeighted(enhanced, 1.4, gaussian, -0.4, 0)
 
-    # חיזוק קונטרסט עדין
-    result = cv2.convertScaleAbs(result, alpha=1.1, beta=5)
+    # 3️⃣ קונטרסט קל
+    final = cv2.convertScaleAbs(sharpened, alpha=1.05, beta=5)
 
-    return result
+    return final
 
 
 def scan_document(image):
@@ -82,30 +79,21 @@ def scan_document(image):
 
     edged = cv2.Canny(gray, 75, 200)
 
-    contours, hierarchy = cv2.findContours(
-        edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+    contours, _ = cv2.findContours(
+        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
-
-    if contours is None or hierarchy is None:
-        return original
-
-    hierarchy = hierarchy[0]
 
     imageArea = resized.shape[0] * resized.shape[1]
     screenCnt = None
     maxArea = 0
 
-    for i, c in enumerate(contours):
+    for c in contours:
 
         area = cv2.contourArea(c)
         if area < imageArea * 0.2:
             continue
 
-        if area > imageArea * 0.95:
-            continue
-
-        parent = hierarchy[i][3]
-        if parent != -1:
+        if area > imageArea * 0.98:
             continue
 
         peri = cv2.arcLength(c, True)
@@ -123,8 +111,8 @@ def scan_document(image):
         screenCnt.reshape(4, 2) * ratio
     )
 
-    # 🔥 שיפור איכות אחרי חיתוך
-    warped = enhance_document(warped)
+    # 🔥 רק שיפור איכות כאן
+    warped = enhance_quality(warped)
 
     return warped
 
@@ -150,8 +138,3 @@ def scan():
 
     _, buffer = cv2.imencode(".jpg", scanned)
     return send_file(BytesIO(buffer.tobytes()), mimetype="image/jpeg")
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
