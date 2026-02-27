@@ -44,15 +44,12 @@ def enhance_document(image):
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
-    # Shadow reduction (mild)
     blur = cv2.GaussianBlur(l, (101, 101), 0)
     blur = np.where(blur == 0, 1, blur)
     l_corrected = cv2.divide(l, blur, scale=255)
 
-    # Gentle blending to avoid over-brightening
     l_blended = cv2.addWeighted(l, 0.8, l_corrected, 0.2, 0)
 
-    # Local contrast enhancement
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     l_contrast = clahe.apply(l_blended)
 
@@ -78,7 +75,7 @@ def scan_document(image):
     )
 
     if contours is None or hierarchy is None:
-        return original
+        return enhance_document(original)
 
     hierarchy = hierarchy[0]
     image_area = resized.shape[0] * resized.shape[1]
@@ -107,10 +104,9 @@ def scan_document(image):
             best = approx
 
     if best is None:
-        return original
+        return enhance_document(original)
 
     warped = four_point_transform(original, best.reshape(4, 2) * ratio)
-
     warped = enhance_document(warped)
 
     return warped
