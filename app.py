@@ -44,13 +44,13 @@ def enhance_document(image):
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
-    blur = cv2.GaussianBlur(l, (101, 101), 0)
+    blur = cv2.GaussianBlur(l, (81, 81), 0)
     blur = np.where(blur == 0, 1, blur)
     l_corrected = cv2.divide(l, blur, scale=255)
 
-    l_blended = cv2.addWeighted(l, 0.8, l_corrected, 0.2, 0)
+    l_blended = cv2.addWeighted(l, 0.9, l_corrected, 0.1, 0)
 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(8, 8))
     l_contrast = clahe.apply(l_blended)
 
     lab_final = cv2.merge((l_contrast, a, b))
@@ -68,7 +68,7 @@ def scan_document(image):
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    edged = cv2.Canny(gray, 75, 200)
+    edged = cv2.Canny(gray, 60, 180)
 
     contours, hierarchy = cv2.findContours(
         edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
@@ -86,10 +86,7 @@ def scan_document(image):
     for i, c in enumerate(contours):
         area = cv2.contourArea(c)
 
-        if area < image_area * 0.2:
-            continue
-
-        if area > image_area * 0.95:
+        if area < image_area * 0.15:
             continue
 
         parent = hierarchy[i][3]
@@ -99,7 +96,16 @@ def scan_document(image):
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
-        if len(approx) == 4 and area > best_area:
+        if len(approx) != 4:
+            continue
+
+        x, y, w, h = cv2.boundingRect(approx)
+        ratio_wh = w / float(h)
+
+        if ratio_wh < 0.4 or ratio_wh > 2.5:
+            continue
+
+        if area > best_area:
             best_area = area
             best = approx
 
